@@ -1,0 +1,953 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Prototipo 3D (Offline WebGL) – Pirámide truncada invertida • Torricelli</title>
+<style>
+  :root{
+    /* Dimensiones del documento (m) */
+    --H: 0.25;      /* altura = 25 cm */
+    --WTX: 0.20;    /* ancho X superior = 20 cm */
+    --WBX: 0.15;    /* ancho X inferior = 15 cm */
+    --LT: 0.30;     /* profundidad Z superior = 30 cm */
+    --LB: 0.225;    /* profundidad Z inferior = 22.5 cm (= LT*WBX/WTX) */
+    --D0: 0.008;    /* diámetro orificio = 0.8 cm */
+  }
+  html { height:100%; margin:0; background:#ffffff; font-family:"Inter", "Segoe UI", system-ui, Arial; overflow:hidden; }
+  
+  /* Estilo para etiquetas de dimensiones */
+  .dimension-label {
+    position: absolute;
+    color: #000000;
+    background: rgba(255, 255, 255, 0.95);
+    padding: 2px 4px;
+    border-radius: 3px;
+    font-size: 11px;
+    pointer-events: none;
+    font-family: monospace;
+    border: 1px solid rgba(0, 0, 0, 0.3);
+    min-width: 20px;
+    text-align: center;
+    z-index: 1000;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+  }
+  .topbar{
+    position: fixed; inset: 12px 12px auto 12px; display:flex; gap:14px; align-items:center; justify-content:space-between;
+    padding:10px 14px; background:#f7faff; border:1px solid #e2ecff; border-radius:14px; box-shadow:0 8px 22px rgba(0,0,0,.06); z-index:3;
+  }
+  .title{ font-weight:800; color:#0b3566; letter-spacing:.2px; }
+  .controls{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+  .panel{ 
+    background:rgba(7,59,122,.06); 
+    border:1px solid #cfe4ff; 
+    border-radius:12px; 
+    padding:10px 12px; 
+    font-size:12px; 
+    color:#0b3566;
+    transition: all 0.3s ease;
+    overflow: hidden;
+    position: relative;
+  }
+  .panel b {
+    transition: color 0.3s ease;
+    font-weight: bold;
+    padding: 2px 6px;
+    border-radius: 4px;
+  }
+  .rightpanel{ position:fixed; top:84px; right:12px; display:flex; flex-direction:column; gap:10px; z-index:2; width:280px; }
+  .group{ background:#fbfdff; border:1px solid #e4eefc; border-radius:12px; padding:10px 12px; box-shadow:0 6px 16px rgba(0,0,0,.04); }
+  .group h4{ margin:0 0 8px 0; color:#05305f; font-size:13px; letter-spacing:.2px; }
+  label{ display:flex; align-items:center; justify-content:space-between; gap:8px; margin:6px 0; font-size:12px; color:#0b3566; }
+  input[type=range]{ width:150px; }
+  .btn{ background:#0b5fb8; color:#fff; border:none; padding:8px 12px; border-radius:10px; cursor:pointer; font-weight:700; }
+  .btn.secondary{ background:#e9f1ff; color:#073b7a; }
+  .btn.ghost{ background:transparent; color:#0b5fb8; border:1px solid #bcd6ff; }
+  .hud{ position:fixed; left:12px; bottom:12px; display:flex; gap:12px; z-index:2; }
+  canvas { display:block; width:100vw; height:100vh; background:#ffffff; }
+</style>
+</head>
+<body>
+  <div class="topbar">
+    <div class="title">Prototipo 3D – Pirámide truncada invertida (25×20×30 → 15×22.5)</div>
+    <div class="controls">
+      <button id="start" class="btn">Iniciar</button>
+      <button id="pause" class="btn secondary">Pausar</button>
+      <button id="reset" class="btn ghost">Reiniciar</button>
+      <span class="panel">T(teo): <b id="Tteo">–</b> · T(sim): <b id="Tsim">0.0 s</b> · Progreso: <b id="prog">0%</b></span>
+    </div>
+  </div>
+
+  <div class="rightpanel">
+    <div class="group">
+      <h4>Física (Torricelli)</h4>
+      <label>C<sub>d</sub>: <span id="cdLbl">0.98</span><input id="cd" type="range" min="0.55" max="1.00" step="0.01" value="0.98" /></label>
+      <label>g (m/s²): <span id="gLbl">9.81</span><input id="gIn" type="range" min="9.5" max="10.2" step="0.01" value="9.81" /></label>
+      <label>Duración visual (s): <span id="durLbl">20</span><input id="dur" type="range" min="8" max="80" step="1" value="20" /></label>
+    </div>
+    <div class="group">
+      <h4>Agua</h4>
+      <label>Amplitud ondas: <span id="ampLbl">0.004</span><input id="amp" type="range" min="0.000" max="0.010" step="0.001" value="0.004" /></label>
+      <label>Frecuencia ondas: <span id="freqLbl">2.5</span><input id="freq" type="range" min="0.5" max="6" step="0.1" value="2.5" /></label>
+      <label>Intensidad chorro: <span id="jetLbl">1.0</span><input id="jet" type="range" min="0.4" max="2.0" step="0.1" value="1.0" /></label>
+      <label>Tamaño gotas: <span id="dropLbl">4.5</span><input id="drop" type="range" min="2" max="8" step="0.5" value="4.5" /></label>
+    </div>
+    <div class="group">
+      <h4>Vistas</h4>
+      <div style="display:flex; gap:8px; flex-wrap:wrap;">
+        <button id="viewIso" class="btn secondary">Isométrica</button>
+        <button id="viewBase" class="btn secondary">Base</button>
+        <button id="viewHole" class="btn secondary">Orificio</button>
+        <button id="autoOrbit" class="btn ghost">Auto-órbita</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="hud panel">Orbita con el mouse • Rueda para zoom • El orificio está en la cara frontal inferior (anillo azul brillante)</div>
+
+  <div class="dimensions panel" style="position: fixed; left: 12px; top: 84px; z-index: 2;">
+    <h4 style="margin: 0 0 8px 0; color: #05305f; font-size: 13px;">Dimensiones del Tanque</h4>
+    <ul style="margin: 0; padding: 0; list-style: none; font-size: 12px; color: #0b3566;">
+      <li>• Altura (H): 25 cm</li>
+      <li>• Ancho superior (WTX): 20 cm</li>
+      <li>• Ancho inferior (WBX): 15 cm</li>
+      <li>• Profundidad superior (LT): 30 cm</li>
+      <li>• Profundidad inferior (LB): 22.5 cm</li>
+      <li>• Diámetro del orificio (D0): 0.8 cm</li>
+    </ul>
+  </div>
+
+  <canvas id="gl"></canvas>
+  
+  <!-- Etiquetas de dimensiones -->
+  <!-- Etiquetas de altura -->
+  <div id="height-label" class="dimension-label">25 cm</div>
+  <div id="height-0" class="dimension-label">0</div>
+  <div id="height-5" class="dimension-label">5</div>
+  <div id="height-10" class="dimension-label">10</div>
+  <div id="height-15" class="dimension-label">15</div>
+  <div id="height-20" class="dimension-label">20</div>
+  <div id="height-25" class="dimension-label">25</div>
+
+  <!-- Etiquetas de ancho superior -->
+  <div id="width-top-label" class="dimension-label">20 cm</div>
+  <div id="width-top-0" class="dimension-label">0</div>
+  <div id="width-top-5" class="dimension-label">5</div>
+  <div id="width-top-10" class="dimension-label">10</div>
+  <div id="width-top-15" class="dimension-label">15</div>
+  <div id="width-top-20" class="dimension-label">20</div>
+
+  <!-- Etiquetas de ancho inferior -->
+  <div id="width-bottom-label" class="dimension-label">15 cm</div>
+  <div id="width-bottom-0" class="dimension-label">0</div>
+  <div id="width-bottom-5" class="dimension-label">5</div>
+  <div id="width-bottom-10" class="dimension-label">10</div>
+  <div id="width-bottom-15" class="dimension-label">15</div>
+
+  <!-- Etiquetas de profundidad superior -->
+  <div id="depth-top-label" class="dimension-label">30 cm</div>
+  <div id="depth-top-0" class="dimension-label">0</div>
+  <div id="depth-top-10" class="dimension-label">10</div>
+  <div id="depth-top-20" class="dimension-label">20</div>
+  <div id="depth-top-30" class="dimension-label">30</div>
+
+  <!-- Etiquetas de profundidad inferior -->
+  <div id="depth-bottom-label" class="dimension-label">22.5 cm</div>
+  <div id="depth-bottom-0" class="dimension-label">0</div>
+  <div id="depth-bottom-7.5" class="dimension-label">7.5</div>
+  <div id="depth-bottom-15" class="dimension-label">15</div>
+  <div id="depth-bottom-22.5" class="dimension-label">22.5</div>
+
+<script>
+let TTEO = 0;
+let TIME_SCALE = 1;
+
+(function(){
+  // ====================== Parámetros físicos ======================
+  const H   = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--H'))   || 0.25;
+  const WTX = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--WTX')) || 0.20; // X top
+  const WBX = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--WBX')) || 0.15; // X bottom
+  const LT  = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--LT'))  || 0.30; // Z top
+  const LB  = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--LB'))  || 0.225; // Z bottom
+  const D0  = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--D0'))  || 0.008;
+  const a0  = Math.PI * Math.pow(D0/2, 2); // área del orificio
+
+  // ====================== Canvas y contexto ======================
+  const canvas = document.getElementById('gl');
+  let gl = null;
+  try {
+    gl = canvas.getContext('webgl', {alpha:false, antialias:true});
+    if (!gl) throw new Error('WebGL no soportado');
+  } catch (e) {
+    alert('Error al inicializar WebGL: ' + e.message);
+    console.error(e);
+    canvas.style.background = '#ffcccc';
+    throw e;
+  }
+  
+  function resize(){ 
+    canvas.width = window.innerWidth; 
+    canvas.height = window.innerHeight; 
+    gl.viewport(0,0,canvas.width,canvas.height); 
+  }
+  window.addEventListener('resize', resize); 
+  resize();
+  
+  gl.clearColor(0.9, 0.95, 1.0, 1); // Fondo azul claro
+  gl.enable(gl.DEPTH_TEST);
+  gl.enable(gl.BLEND);
+  gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+  gl.enable(gl.CULL_FACE);
+  gl.cullFace(gl.BACK);
+
+  // ====================== Shaders ======================
+  const vs = `
+    attribute vec3 aPos;
+    attribute vec3 aNormal;
+    attribute vec4 aColor;
+    uniform mat4 uMVP;
+    uniform mat4 uM;
+    uniform vec3 uLightDir;
+    varying vec4 vColor;
+    void main() {
+      gl_Position = uMVP * vec4(aPos, 1.0);
+      vec3 normal = normalize(mat3(uM) * aNormal);
+      float diff = max(dot(normal, uLightDir), 0.2);
+      vColor = aColor * vec4(vec3(diff), 1.0);
+    }
+  `;
+  
+  const fs = `
+    precision mediump float;
+    varying vec4 vColor;
+    void main() {
+      gl_FragColor = vColor;
+    }
+  `;
+  
+  function compile(type, src){
+    const s = gl.createShader(type);
+    gl.shaderSource(s, src);
+    gl.compileShader(s);
+    if(!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
+      const msg = gl.getShaderInfoLog(s);
+      console.error('Error compilando shader:', msg, src);
+      alert('Error compilando shader: ' + msg);
+      throw msg;
+    }
+    return s;
+  }
+  
+  function program(vsrc, fsrc){
+    const p = gl.createProgram();
+    gl.attachShader(p, compile(gl.VERTEX_SHADER, vsrc));
+    gl.attachShader(p, compile(gl.FRAGMENT_SHADER, fsrc));
+    gl.linkProgram(p);
+    if(!gl.getProgramParameter(p, gl.LINK_STATUS)) {
+      const msg = gl.getProgramInfoLog(p);
+      console.error('Error enlazando programa WebGL:', msg);
+      alert('Error enlazando programa WebGL: ' + msg);
+      throw msg;
+    }
+    return p;
+  }
+  
+  const prog = program(vs, fs); 
+  gl.useProgram(prog);
+  
+  const loc = { 
+    aPos: gl.getAttribLocation(prog,'aPos'), 
+    aNormal: gl.getAttribLocation(prog,'aNormal'), 
+    aColor: gl.getAttribLocation(prog,'aColor'), 
+    uMVP: gl.getUniformLocation(prog,'uMVP'), 
+    uM: gl.getUniformLocation(prog,'uM'), 
+    uLightDir: gl.getUniformLocation(prog,'uLightDir') 
+  };
+
+  // ====================== Utilidades matemáticas (col-major) ======================
+  function mat4Identity(){ 
+    return new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]); 
+  }
+  
+  function mat4Multiply(a,b){ 
+    const r = new Float32Array(16); 
+    for(let i=0; i<4; i++){ 
+      for(let j=0; j<4; j++){ 
+        r[j*4+i] = a[0*4+i]*b[j*4+0] + a[1*4+i]*b[j*4+1] + a[2*4+i]*b[j*4+2] + a[3*4+i]*b[j*4+3]; 
+      } 
+    } 
+    return r; 
+  }
+  
+  function mat4Perspective(fovy, aspect, near, far){ 
+    const f = 1/Math.tan(fovy/2), nf = 1/(near-far); 
+    const m = new Float32Array(16); 
+    m[0] = f/aspect; 
+    m[5] = f; 
+    m[10] = (far+near)*nf; 
+    m[11] = -1; 
+    m[14] = (2*far*near)*nf; 
+    return m; 
+  }
+  
+  function vec3Normalize(v){ 
+    const l = Math.hypot(v[0],v[1],v[2]) || 1; 
+    return [v[0]/l, v[1]/l, v[2]/l]; 
+  }
+  
+  function vec3Cross(a,b){ 
+    return [
+      a[1]*b[2] - a[2]*b[1], 
+      a[2]*b[0] - a[0]*b[2], 
+      a[0]*b[1] - a[1]*b[0]
+    ]; 
+  }
+  
+  function mat4LookAt(eye, center, up){ 
+    const z = vec3Normalize([eye[0]-center[0], eye[1]-center[1], eye[2]-center[2]]); 
+    const x = vec3Normalize(vec3Cross(up, z)); 
+    const y = vec3Cross(z, x); 
+    const m = new Float32Array(16); 
+    m[0] = x[0]; m[1] = y[0]; m[2] = z[0]; m[3] = 0; 
+    m[4] = x[1]; m[5] = y[1]; m[6] = z[1]; m[7] = 0; 
+    m[8] = x[2]; m[9] = y[2]; m[10] = z[2]; m[11] = 0; 
+    m[12] = -(x[0]*eye[0] + x[1]*eye[1] + x[2]*eye[2]); 
+    m[13] = -(y[0]*eye[0] + y[1]*eye[1] + y[2]*eye[2]); 
+    m[14] = -(z[0]*eye[0] + z[1]*eye[1] + z[2]*eye[2]); 
+    m[15] = 1; 
+    return m; 
+  }
+
+  // ====================== Geometría (pirámide truncada rectangular) ======================
+  function makeFrustumRect(topX, topZ, botX, botZ, height, rgba){
+    const hxT = topX/2, hzT = topZ/2, hxB = botX/2, hzB = botZ/2; 
+    const y0 = 0, y1 = height;
+    const v = [
+      [-hxB, y0, -hzB], [ hxB, y0, -hzB], [ hxB, y0, hzB], [-hxB, y0, hzB],
+      [-hxT, y1, -hzT], [ hxT, y1, -hzT], [ hxT, y1, hzT], [-hxT, y1, hzT]
+    ];
+    const idx = [
+      0,1,5, 0,5,4, 1,2,6, 1,6,5, 2,3,7, 2,7,6, 
+      3,0,4, 3,4,7, 4,5,6, 4,6,7, 0,3,2, 0,2,1
+    ];
+    const pos = [], nor = [], col = [];
+    
+    for(let i=0; i<idx.length; i+=3){ 
+      const a = v[idx[i]], b = v[idx[i+1]], c = v[idx[i+2]]; 
+      const e1 = [b[0]-a[0], b[1]-a[1], b[2]-a[2]];
+      const e2 = [c[0]-a[0], c[1]-a[1], c[2]-a[2]];
+      let n = [
+        e1[1]*e2[2] - e1[2]*e2[1],
+        e1[2]*e2[0] - e1[0]*e2[2],
+        e1[0]*e2[1] - e1[1]*e2[0]
+      ];
+      const ln = Math.hypot(n[0], n[1], n[2]) || 1;
+      n = [n[0]/ln, n[1]/ln, n[2]/ln];
+      pos.push(...a, ...b, ...c);
+      nor.push(...n, ...n, ...n);
+      for(let k=0; k<3; k++) col.push(rgba[0], rgba[1], rgba[2], rgba[3]);
+    }
+    
+    return { 
+      pos: new Float32Array(pos), 
+      nor: new Float32Array(nor), 
+      col: new Float32Array(col), 
+      count: idx.length 
+    };
+  }
+
+  function makeInterleaved(mesh){ 
+    const stride = 10; 
+    const data = new Float32Array(mesh.count * stride); 
+    for(let i=0; i<mesh.count; i++){ 
+      data[i*stride+0] = mesh.pos[i*3+0];
+      data[i*stride+1] = mesh.pos[i*3+1];
+      data[i*stride+2] = mesh.pos[i*3+2];
+      data[i*stride+3] = mesh.nor[i*3+0];
+      data[i*stride+4] = mesh.nor[i*3+1];
+      data[i*stride+5] = mesh.nor[i*3+2];
+      data[i*stride+6] = mesh.col[i*4+0];
+      data[i*stride+7] = mesh.col[i*4+1];
+      data[i*stride+8] = mesh.col[i*4+2];
+      data[i*stride+9] = mesh.col[i*4+3];
+    } 
+    const vbo = gl.createBuffer(); 
+    gl.bindBuffer(gl.ARRAY_BUFFER, vbo); 
+    gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW); 
+    return { vbo, count: mesh.count, strideBytes: 40, mesh }; 
+  }
+
+  function updateInterleaved(buf, mesh){ 
+    const stride = 10; 
+    const data = new Float32Array(mesh.count * stride); 
+    for(let i=0; i<mesh.count; i++){ 
+      data[i*stride+0] = mesh.pos[i*3+0];
+      data[i*stride+1] = mesh.pos[i*3+1];
+      data[i*stride+2] = mesh.pos[i*3+2];
+      data[i*stride+3] = mesh.nor[i*3+0];
+      data[i*stride+4] = mesh.nor[i*3+1];
+      data[i*stride+5] = mesh.nor[i*3+2];
+      data[i*stride+6] = mesh.col[i*4+0];
+      data[i*stride+7] = mesh.col[i*4+1];
+      data[i*stride+8] = mesh.col[i*4+2];
+      data[i*stride+9] = mesh.col[i*4+3];
+    } 
+    gl.bindBuffer(gl.ARRAY_BUFFER, buf.vbo); 
+    gl.bufferData(gl.ARRAY_BUFFER, data, gl.DYNAMIC_DRAW); 
+    buf.mesh = mesh; 
+  }
+
+  function enableAttribs(buf){ 
+    gl.bindBuffer(gl.ARRAY_BUFFER, buf.vbo); 
+    gl.enableVertexAttribArray(loc.aPos); 
+    gl.vertexAttribPointer(loc.aPos, 3, gl.FLOAT, false, buf.strideBytes, 0); 
+    gl.enableVertexAttribArray(loc.aNormal); 
+    gl.vertexAttribPointer(loc.aNormal, 3, gl.FLOAT, false, buf.strideBytes, 12); 
+    gl.enableVertexAttribArray(loc.aColor); 
+    gl.vertexAttribPointer(loc.aColor, 4, gl.FLOAT, false, buf.strideBytes, 24); 
+  }
+
+  // Tanque (vidrio) – pirámide truncada
+  const tankMeshDebug = makeFrustumRect(WTX, LT, WBX, LB, H, [0.7, 0.9, 1.0, 0.3]); // Azul transparente
+  const tankBuf = makeInterleaved(tankMeshDebug);
+
+  // Agua (volumen) – frustum interior dinámico
+  function wX(h){ return WBX + (WTX - WBX) * (Math.max(h,0) / H); }
+  function wZ(h){ return LB  + (LT  - LB ) * (Math.max(h,0) / H); }
+  function waterMesh(h){ 
+    return makeFrustumRect(wX(h), wZ(h), WBX*0.985, LB*0.985, Math.max(h,0), [0.0, 0.5, 0.8, 0.7]); 
+  }
+  
+  let h = H; 
+  let waterBuf = makeInterleaved(waterMesh(h));
+
+  // Superficie de agua (malla de ondas)
+  function makeCapGrid(wx, wz, y, nx, nz, rgba){ 
+    const dx = wx/nx, dz = wz/nz, x0 = -wx/2, z0 = -wz/2; 
+    const pos = [], nor = [], col = []; 
+    for(let iz=0; iz<nz; iz++){ 
+      for(let ix=0; ix<nx; ix++){ 
+        const x = x0+ix*dx, z = z0+iz*dz; 
+        const quad = [[x,y,z], [x+dx,y,z], [x+dx,y,z+dz], [x,y,z+dz]]; 
+        const tris = [[0,1,2], [0,2,3]]; 
+        for(const t of tris){ 
+          const a = quad[t[0]], b = quad[t[1]], c = quad[t[2]]; 
+          pos.push(...a, ...b, ...c); 
+          nor.push(0,1,0, 0,1,0, 0,1,0); 
+          for(let k=0; k<3; k++) col.push(rgba[0], rgba[1], rgba[2], rgba[3]); 
+        } 
+      } 
+    } 
+    return { 
+      pos: new Float32Array(pos), 
+      nor: new Float32Array(nor), 
+      col: new Float32Array(col), 
+      count: (nx*nz*2*3) 
+    };
+  }
+  
+  function rebuildCap(){ 
+    capMesh = makeCapGrid(wX(h), wZ(h), Math.max(h,0)+0.0015, 16, 12, [0.2, 0.6, 1.0, 0.4]); 
+    capBuf = makeInterleaved(capMesh); 
+  }
+  
+  let capMesh, capBuf; 
+  rebuildCap();
+
+  // Aristas (wireframe)
+  function makeEdgesLines(topX, topZ, botX, botZ, height, rgba){ 
+    const hxT = topX/2, hzT = topZ/2, hxB = botX/2, hzB = botZ/2; 
+    const y0 = 0, y1 = height; 
+    const P = [
+      [-hxB,y0,-hzB], [hxB,y0,-hzB], [hxB,y0,hzB], [-hxB,y0,hzB],
+      [-hxT,y1,-hzT], [hxT,y1,-hzT], [hxT,y1,hzT], [-hxT,y1,hzT]
+    ]; 
+    const E = [
+      [0,1], [1,2], [2,3], [3,0], [4,5], [5,6], [6,7], [7,4],
+      [0,4], [1,5], [2,6], [3,7]
+    ]; 
+    const pos = [], nor = [], col = []; 
+    for(const e of E){ 
+      const a = P[e[0]], b = P[e[1]]; 
+      pos.push(...a, ...b); 
+      nor.push(0,1,0, 0,1,0); 
+      col.push(rgba[0], rgba[1], rgba[2], rgba[3], rgba[0], rgba[1], rgba[2], rgba[3]); 
+    } 
+    const stride = 10; 
+    const data = new Float32Array((pos.length/3) * stride); 
+    for(let i=0; i<pos.length/3; i++){ 
+      data[i*stride+0] = pos[i*3+0];
+      data[i*stride+1] = pos[i*3+1];
+      data[i*stride+2] = pos[i*3+2];
+      data[i*stride+3] = 0;
+      data[i*stride+4] = 1;
+      data[i*stride+5] = 0;
+      data[i*stride+6] = rgba[0];
+      data[i*stride+7] = rgba[1];
+      data[i*stride+8] = rgba[2];
+      data[i*stride+9] = rgba[3];
+    } 
+    const vbo = gl.createBuffer(); 
+    gl.bindBuffer(gl.ARRAY_BUFFER, vbo); 
+    gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW); 
+    return { vbo, count: pos.length/3, strideBytes: 40 }; 
+  }
+  
+  const edgeBuf = makeEdgesLines(WTX, LT, WBX, LB, H, [0.04, 0.20, 0.58, 1.0]);
+
+  // Grilla de piso
+  function makeGrid(size=1.6, steps=26){ 
+    const pos = [], nor = [], col = []; 
+    const c1 = [0.92, 0.96, 1.0, 1], c2 = [0.88, 0.93, 1.0, 1]; 
+    const w = 0.003; 
+    for(let i=-steps; i<=steps; i++){ 
+      const t = i/steps*size; 
+      const a = [-size, -0.002, t], b = [size, -0.002, t]; 
+      const c = [t, -0.002, -size], d = [t, -0.002, size]; 
+      const cc = (i%2 ? c1 : c2); 
+      pos.push(
+        a[0], a[1], a[2]-w, b[0], b[1], b[2]-w, b[0], b[1], b[2]+w, 
+        a[0], a[1], a[2]-w, b[0], b[1], b[2]+w, a[0], a[1], a[2]+w
+      ); 
+      pos.push(
+        c[0]-w, c[1], c[2], d[0]-w, d[1], d[2], d[0]+w, d[1], d[2], 
+        c[0]-w, c[1], c[2], d[0]+w, d[1], d[2], c[0]+w, c[1], c[2]
+      ); 
+      for(let k=0; k<12; k++){ 
+        nor.push(0,1,0); 
+        col.push(cc[0], cc[1], cc[2], 0.86); 
+      } 
+    } 
+    return makeInterleaved({
+      pos: new Float32Array(pos), 
+      nor: new Float32Array(nor), 
+      col: new Float32Array(col), 
+      count: pos.length/3
+    }); 
+  }
+  
+  const gridBuf = makeGrid(1.6, 26);
+
+  // Orificio: anillo + boquilla
+  function makeRing(rin, rout, depth, seg, rgba){ 
+    const pos = [], nor = [], col = []; 
+    const h = depth/2; 
+    for(let i=0; i<seg; i++){ 
+      const a = i/seg*2*Math.PI, b = (i+1)/seg*2*Math.PI; 
+      const ca = Math.cos(a), sa = Math.sin(a), cb = Math.cos(b), sb = Math.sin(b); 
+      const v1 = [rout*ca, 0, -h], v2 = [rout*cb, 0, -h], v3 = [rout*cb, 0, h], v4 = [rout*ca, 0, h]; 
+      const u1 = [rin*cb, 0, -h], u2 = [rin*ca, 0, -h], u3 = [rin*ca, 0, h], u4 = [rin*cb, 0, h]; 
+      const tris = [
+        v1,v2,v3, v1,v3,v4, u1,u2,u3, u1,u3,u4, 
+        v1,v2,u1, v1,u1,u2, v4,v3,u3, v4,u3,u4
+      ]; 
+      for(const p of tris){ 
+        pos.push(...p); 
+        nor.push(0,0,1); 
+        col.push(rgba[0], rgba[1], rgba[2], rgba[3]); 
+      } 
+    } 
+    return makeInterleaved({
+      pos: new Float32Array(pos), 
+      nor: new Float32Array(nor), 
+      col: new Float32Array(col), 
+      count: pos.length/3
+    }); 
+  }
+  
+  function makeCylinder(r, h, seg, rgba){ 
+    const pos = [], nor = [], col = []; 
+    const y0 = -h/2, y1 = h/2; 
+    for(let i=0; i<seg; i++){ 
+      const a = i/seg*2*Math.PI, b = (i+1)/seg*2*Math.PI; 
+      const ca = Math.cos(a), sa = Math.sin(a), cb = Math.cos(b), sb = Math.sin(b); 
+      const A = [r*ca, y0, 0], B = [r*cb, y0, 0], C = [r*cb, y1, 0], D = [r*ca, y1, 0]; 
+      const tri = [A,B,C, A,C,D]; 
+      for(const p of tri){ 
+        pos.push(...p); 
+        nor.push(0,0,1); 
+        col.push(rgba[0], rgba[1], rgba[2], rgba[3]); 
+      } 
+    } 
+    return makeInterleaved({
+      pos: new Float32Array(pos), 
+      nor: new Float32Array(nor), 
+      col: new Float32Array(col), 
+      count: pos.length/3
+    }); 
+  }
+  
+  const ringBuf = makeRing(D0*0.45, D0*0.70, 0.016, 36, [0.02, 0.36, 0.90, 1.0]);
+  const nozzleBuf = makeCylinder(D0*0.38, 0.020, 32, [0.02, 0.36, 0.90, 1.0]);
+
+  // ====================== Cámara orbital ======================
+  const cam = { r: 0.95, theta: -0.95, phi: 0.58, target: [0, H*0.48, 0], auto: false };
+  
+  function eye(){ 
+    return [ 
+      cam.target[0] + cam.r * Math.cos(cam.phi) * Math.sin(cam.theta),
+      cam.target[1] + cam.r * Math.sin(cam.phi),
+      cam.target[2] + cam.r * Math.cos(cam.phi) * Math.cos(cam.theta)
+    ]; 
+  }
+  
+  let dragging = false, px = 0, py = 0; 
+  canvas.addEventListener('mousedown', e => { 
+    dragging = true; 
+    px = e.clientX; 
+    py = e.clientY; 
+  }); 
+  
+  window.addEventListener('mouseup', () => dragging = false); 
+  
+  window.addEventListener('mousemove', e => { 
+    if(!dragging) return; 
+    const dx = e.clientX - px, dy = e.clientY - py; 
+    px = e.clientX; 
+    py = e.clientY; 
+    cam.theta += dx * 0.006; 
+    cam.phi = Math.max(0.12, Math.min(Math.PI-0.12, cam.phi + dy * 0.006)); 
+  }); 
+  
+  canvas.addEventListener('wheel', e => { 
+    cam.r = Math.max(0.38, Math.min(2.3, cam.r * (1 + Math.sign(e.deltaY) * 0.08))); 
+  });
+
+  function tweenCam(to, ms){ 
+    const from = {...cam}; 
+    const t0 = performance.now(); 
+    function step(){ 
+      const t = (performance.now()-t0)/ms; 
+      const k = t >= 1 ? 1 : t; 
+      cam.theta = from.theta + (to.theta - from.theta) * k; 
+      cam.phi = from.phi + (to.phi - from.phi) * k; 
+      cam.r = from.r + (to.r - from.r) * k; 
+      cam.target[0] = from.target[0] + (to.target[0] - from.target[0]) * k; 
+      cam.target[1] = from.target[1] + (to.target[1] - from.target[1]) * k; 
+      cam.target[2] = from.target[2] + (to.target[2] - from.target[2]) * k; 
+      if(k < 1) requestAnimationFrame(step);
+    } 
+    requestAnimationFrame(step); 
+  }
+  
+  document.getElementById('viewIso').addEventListener('click', () => 
+    tweenCam({theta: -0.95, phi: 0.58, r: 0.95, target: [0, H*0.48, 0]}, 650));
+  
+  document.getElementById('viewBase').addEventListener('click', () => 
+    tweenCam({theta: -Math.PI*0.02, phi: 0.28, r: 0.85, target: [0, H*0.12, 0.07]}, 700));
+  
+  document.getElementById('viewHole').addEventListener('click', () => 
+    tweenCam({theta: 0.02, phi: 0.35, r: 0.80, target: [0, 0.035, wZ(0)/2 + 0.06]}, 700));
+  
+  document.getElementById('autoOrbit').addEventListener('click', (e) => { 
+    cam.auto = !cam.auto; 
+    e.target.classList.toggle('btn'); 
+    e.target.classList.toggle('ghost'); 
+    e.target.textContent = cam.auto ? 'Auto-órbita ✓' : 'Auto-órbita'; 
+  });
+
+  // ====================== Torricelli y animación ======================
+  let Cd = 0.98, grav = 9.81, DUR = 20, AMP = 0.004, FREQ = 2.5, JET = 1.0, DROP_SIZE = 4.5;
+  
+  const cdEl = document.getElementById('cd');
+  const gEl = document.getElementById('gIn');
+  const durEl = document.getElementById('dur');
+  const ampEl = document.getElementById('amp');
+  const freqEl = document.getElementById('freq');
+  const jetEl = document.getElementById('jet');
+  const dropEl = document.getElementById('drop');
+  
+  function updLbl(id, v){ 
+    document.getElementById(id).textContent = (typeof v === 'number' ? (Math.round(v*100)/100).toFixed(2) : v); 
+  }
+  
+  function syncUI(){ 
+    updLbl('cdLbl', Cd); 
+    updLbl('gLbl', grav); 
+    updLbl('durLbl', DUR); 
+    updLbl('ampLbl', AMP); 
+    updLbl('freqLbl', FREQ); 
+    updLbl('jetLbl', JET); 
+    updLbl('dropLbl', DROP_SIZE); 
+    recalcTheoryAndScale(); 
+  }
+  
+  cdEl.addEventListener('input', () => { Cd = parseFloat(cdEl.value); syncUI(); });
+  gEl.addEventListener('input',  () => { grav = parseFloat(gEl.value);  syncUI(); });
+  durEl.addEventListener('input', () => { DUR = parseFloat(durEl.value); syncUI(); });
+  ampEl.addEventListener('input', () => { AMP = parseFloat(ampEl.value); updLbl('ampLbl', AMP); });
+  freqEl.addEventListener('input', () => { FREQ = parseFloat(freqEl.value); updLbl('freqLbl', FREQ); });
+  jetEl.addEventListener('input', () => { JET = parseFloat(jetEl.value); updLbl('jetLbl', JET); });
+  dropEl.addEventListener('input', () => { DROP_SIZE = parseFloat(dropEl.value); updLbl('dropLbl', DROP_SIZE); });
+  
+  syncUI();
+
+  function A(hh){ return wX(hh) * wZ(hh); }
+  
+  function dhdt(hh){ 
+    return -(Cd * a0 * Math.sqrt(2 * grav * Math.max(hh,0))) / Math.max(A(hh), 1e-8); 
+  }
+
+  function T_theoretical(){ 
+    const C = 1/(Cd * a0 * Math.sqrt(2 * grav)); 
+    let s = 0, N = 2400, dh = H/N, x = H; 
+    for(let i=0; i<N; i++){ 
+      const area = A(x); 
+      s += 1/(Math.sqrt(Math.max(x, 1e-9)) * Math.max(area, 1e-9)); 
+      x -= dh; 
+    } 
+    return 2 * dh * s * C; 
+  }
+  
+  function recalcTheoryAndScale(){ 
+    TTEO = T_theoretical(); 
+    const desired = Math.max(1, DUR); 
+    const raw = TTEO / desired; 
+    const MAX_ACCEL = 3.0, MIN_ACCEL = 0.10;
+    TIME_SCALE = Math.max(MIN_ACCEL, Math.min(MAX_ACCEL, raw || 1)); 
+  }
+
+  // Partículas del chorro
+  const MAX_DROPS = 300, dropStride = 10; 
+  const dropData = new Float32Array(MAX_DROPS * dropStride); 
+  const dropPhys = []; 
+  let dropCount = 0; 
+  const dropVBO = gl.createBuffer();
+  
+  function spawnDrop(vexit){ 
+    if(dropCount >= MAX_DROPS) return; 
+    const i = dropCount * dropStride; 
+    const r = D0/2 * 0.6;
+    const ang = Math.random() * Math.PI * 2; 
+    const rad = Math.sqrt(Math.random()) * r; 
+    const ox = rad * Math.cos(ang), oy = (Math.random()-0.5) * 0.0018; 
+    dropData[i+0] = ox; 
+    dropData[i+1] = oy; 
+    dropData[i+2] = wZ(0)/2 + 0.002; 
+    dropData[i+3] = 0; 
+    dropData[i+4] = 1; 
+    dropData[i+5] = 0; 
+    dropData[i+6] = 0.2;  
+    dropData[i+7] = 0.7;  
+    dropData[i+8] = 1.0;  
+    dropData[i+9] = DROP_SIZE * 1.2;
+    const vz = Math.min(vexit, 6.0) * 0.55 * JET; 
+    dropPhys.push({ vx: 0.0, vy: -0.25, vz, life: 1.6 }); 
+    dropCount++; 
+  }
+  
+  function updateDrops(dt){ 
+    for(let k=0; k<dropCount; k++){ 
+      const base = k * dropStride; 
+      const ph = dropPhys[k]; 
+      ph.life -= dt; 
+      dropData[base+0] += ph.vx * dt; 
+      dropData[base+1] += ph.vy * dt; 
+      dropData[base+2] += ph.vz * dt; 
+      ph.vy -= grav * 0.20 * dt; 
+      ph.vz -= 0.10 * dt; 
+      if(ph.life <= 0 || dropData[base+1] < -0.25 || dropData[base+2] > wZ(0)/2 + 0.7){ 
+        const last = dropCount - 1; 
+        for(let j=0; j<dropStride; j++) dropData[base+j] = dropData[last * dropStride + j]; 
+        dropPhys[k] = dropPhys[last]; 
+        dropCount--; 
+        k--; 
+      } 
+    } 
+    gl.bindBuffer(gl.ARRAY_BUFFER, dropVBO); 
+    gl.bufferData(gl.ARRAY_BUFFER, dropData.subarray(0, dropCount * dropStride), gl.DYNAMIC_DRAW); 
+  }
+  
+  function drawDrops(uMVP, uM){ 
+    gl.bindBuffer(gl.ARRAY_BUFFER, dropVBO); 
+    gl.enableVertexAttribArray(loc.aPos); 
+    gl.vertexAttribPointer(loc.aPos, 3, gl.FLOAT, false, dropStride*4, 0); 
+    gl.enableVertexAttribArray(loc.aNormal); 
+    gl.vertexAttribPointer(loc.aNormal, 3, gl.FLOAT, false, dropStride*4, 12); 
+    gl.enableVertexAttribArray(loc.aColor); 
+    gl.vertexAttribPointer(loc.aColor, 4, gl.FLOAT, false, dropStride*4, 24); 
+    gl.uniformMatrix4fv(loc.uMVP, false, uMVP); 
+    gl.uniformMatrix4fv(loc.uM, false, uM); 
+    gl.drawArrays(gl.POINTS, 0, dropCount); 
+  }
+
+  // ====================== Controles ======================
+  let running = false, paused = false, t_phys = 0; 
+  
+  document.getElementById('start').addEventListener('click', () => { 
+    running = true; 
+    paused = false; 
+    recalcTheoryAndScale(); 
+  }); 
+  
+  document.getElementById('pause').addEventListener('click', () => { 
+    if(!running) return; 
+    paused = !paused; 
+  }); 
+  
+  document.getElementById('reset').addEventListener('click', () => { 
+    running = false; 
+    paused = false; 
+    t_phys = 0; 
+    h = H; 
+    dropCount = 0; 
+    updateInterleaved(waterBuf, waterMesh(h)); 
+    rebuildCap(); 
+    updateLabels(); 
+  });
+
+  // ====================== Dibujo ======================
+  const lightDir = vec3Normalize([1, 1.2, 1]); 
+  const TteoEl = document.getElementById('Tteo'), 
+        TsimEl = document.getElementById('Tsim'), 
+        progEl = document.getElementById('prog');
+        
+  function updateLabels(){ 
+    TsimEl.textContent = fmtT(t_phys);
+    const progress = Math.round((1 - h/H) * 100);
+    progEl.textContent = `${progress}%`;
+    progEl.style.color = progress > 90 ? '#ff4444' : 
+                        progress > 70 ? '#ff8800' : 
+                        progress > 50 ? '#ffbb00' : 
+                        progress > 30 ? '#44aa00' : '#00aa44';
+    TteoEl.textContent = fmtT(TTEO);
+    
+    const panel = document.querySelector('.panel');
+    if(panel) {
+      panel.style.background = `linear-gradient(to right, #e7f3ff ${progress}%, #f7faff ${progress}%)`;
+    }
+  }
+  
+  function fmtT(s){ 
+    const m = Math.floor(s/60);
+    const ss = (s - m*60).toFixed(1).padStart(4, '0'); 
+    return `${m}m ${ss}s`; 
+  }
+
+  // Integrador RK4
+  function stepRK4(hh, dt){ 
+    const k1 = dhdt(hh); 
+    const k2 = dhdt(hh + 0.5*dt*k1); 
+    const k3 = dhdt(hh + 0.5*dt*k2); 
+    const k4 = dhdt(hh + dt*k3); 
+    return hh + dt*(k1 + 2*k2 + 2*k3 + k4)/6; 
+  }
+
+  let last = performance.now(), tWave = 0; 
+  
+  function uniMats(model){ 
+    const proj = mat4Perspective(52*Math.PI/180, canvas.width/canvas.height, 0.01, 50.0); 
+    const view = mat4LookAt(eye(), cam.target, [0,1,0]); 
+    const mvp = mat4Multiply(proj, mat4Multiply(view, model)); 
+    gl.uniformMatrix4fv(loc.uMVP, false, mvp); 
+    gl.uniformMatrix4fv(loc.uM, false, model); 
+    gl.uniform3f(loc.uLightDir, lightDir[0], lightDir[1], lightDir[2]); 
+    return {proj, view, mvp}; 
+  }
+  
+  function drawTriangles(buf, model){
+    enableAttribs(buf);
+    uniMats(model);
+    gl.drawArrays(gl.TRIANGLES, 0, buf.count);
+  }
+  
+  function drawLines(buf, model){
+    enableAttribs(buf);
+    uniMats(model);
+    gl.drawArrays(gl.LINES, 0, buf.count);
+  }
+
+  function loop(){ 
+    requestAnimationFrame(loop); 
+    const now = performance.now(); 
+    const dt = (now - last) / 1000; 
+    last = now; 
+    
+    if(cam.auto) cam.theta += 0.0032;
+    
+    // Física
+    if(running && !paused){ 
+      let dt_phys = dt * TIME_SCALE; 
+      const MAXSTEP = 0.02; 
+      while(dt_phys > 0){ 
+        const hstep = Math.min(MAXSTEP, dt_phys); 
+        const hn = stepRK4(h, hstep); 
+        h = Math.max(0, hn); 
+        t_phys += hstep; 
+        dt_phys -= hstep; 
+        if(h <= 0){ 
+          running = false; 
+          break; 
+        } 
+      }
+      
+      updateInterleaved(waterBuf, waterMesh(h)); 
+      rebuildCap(); 
+      const vexit = Cd * Math.sqrt(Math.max(2 * grav * h, 0)); 
+      const want = Math.min(12, 4 + vexit * 1.4) * JET; 
+      for(let s=0; s<want; s++){ 
+        if(Math.random() < 0.6 && dropCount < MAX_DROPS) spawnDrop(vexit); 
+      } 
+    }
+
+    // Ondas en superficie
+    tWave += dt; 
+    if(capMesh){ 
+      const data = capMesh.pos; 
+      const nTris = data.length / 9; 
+      for(let i=0; i<nTris; i++){ 
+        for(let v=0; v<3; v++){ 
+          const idx = i*9 + v*3; 
+          const x = data[idx+0], z = data[idx+2]; 
+          const baseH = h + 0.0015; 
+          const ripple = AMP * Math.sin(FREQ*(x*6.0 + z*6.0) + tWave*2.0) * Math.exp(-Math.abs(x)*0.5 - Math.abs(z)*0.5); 
+          data[idx+1] = baseH + ripple; 
+        } 
+      } 
+      updateInterleaved(capBuf, capMesh); 
+    }
+
+    updateDrops(dt);
+
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    const I = mat4Identity();
+    
+    // Dibujar escena
+    drawTriangles(gridBuf, I);
+    gl.depthMask(true); 
+    drawTriangles(tankBuf, I);
+    drawTriangles(waterBuf, I);
+    drawTriangles(capBuf, I);
+    drawLines(edgeBuf, I);
+
+    // Orificio
+    const ringM = mat4Identity(); 
+    ringM[13] = 0.002; 
+    ringM[14] = wZ(0)/2 + 0.006; 
+    drawTriangles(ringBuf, ringM);
+    
+    const nozM = mat4Identity(); 
+    nozM[13] = 0.002; 
+    nozM[14] = wZ(0)/2 + 0.017; 
+    drawTriangles(nozzleBuf, nozM);
+    
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE); 
+    drawTriangles(ringBuf, ringM); 
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+
+    // Gotas
+    const pv = uniMats(I); 
+    if (running) {
+      drawDrops(pv.mvp, I);
+    }
+
+    updateLabels();
+  }
+
+  // Iniciar bucle principal
+  loop();
+
+})();
+</script>
+</body>
+</html>
